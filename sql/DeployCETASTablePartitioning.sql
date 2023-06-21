@@ -101,12 +101,12 @@ CREATE PROCEDURE [cetas].[usp_CreateExternalTableFromSourceTable]
     @debug_only                 BIT             = 0
 AS
 BEGIN
-	SET NOCOUNT ON;
+    SET NOCOUNT ON;
 
-	DECLARE @schema_name            SYSNAME,
-			@table_name             SYSNAME,
-			@columns_sql            NVARCHAR(MAX),
-			@external_table_name    VARCHAR(256);
+    DECLARE @schema_name            SYSNAME,
+            @table_name             SYSNAME,
+            @columns_sql            NVARCHAR(MAX),
+            @external_table_name    VARCHAR(256);
 
     -- extract schema and table/view name from the object name
     SELECT @schema_name = PARSENAME(@object_name, 2), @table_name = PARSENAME(@object_name, 1);
@@ -138,7 +138,7 @@ BEGIN
 	IF @drop_existing = 1
 		SET @create_external_table_sql = @create_external_table_sql + N'
 IF EXISTS(SELECT 1 FROM sys.external_tables WHERE [object_id] = OBJECT_ID(''' + @schema_name + '.' + @external_table_name + '''))
-	DROP EXTERNAL TABLE [' + @schema_name + '].[' + @external_table_name + '];
+    DROP EXTERNAL TABLE [' + @schema_name + '].[' + @external_table_name + '];
 ';
 
 	SET @create_external_table_sql = @create_external_table_sql + N'
@@ -146,19 +146,19 @@ CREATE EXTERNAL TABLE [' + @schema_name + '].[' + @external_table_name + '] (
 ' + @columns_sql + '
 )
 WITH (
-		LOCATION = ''' + @schema_name + '/' + @table_name + '/' + @partition_date_column + '/Year=*/Month=*/Day=*/*.parquet'',
-		DATA_SOURCE = [' + @data_source_name + '],
-		FILE_FORMAT = ParquetFileFormat,
-		PARTITION (
-			[' + @partition_date_column + 'Year],
-			[' + @partition_date_column + 'Month],
-			[' + @partition_date_column + 'Day]
-		) 
+        LOCATION = ''' + @schema_name + '/' + @table_name + '/' + @partition_date_column + '/Year=*/Month=*/Day=*/*.parquet'',
+        DATA_SOURCE = [' + @data_source_name + '],
+        FILE_FORMAT = ParquetFileFormat,
+        PARTITION (
+            [' + @partition_date_column + 'Year],
+            [' + @partition_date_column + 'Month],
+            [' + @partition_date_column + 'Day]
+        ) 
 );
 ';
 
-	IF @debug_only = 0
-		EXEC sp_executesql @create_external_table_sql;
+    IF @debug_only = 0
+        EXEC sp_executesql @create_external_table_sql;
 
 END;
 GO
@@ -173,31 +173,31 @@ GO
 
 -- Create Stored procedure to populate the external table using CETAS to generate the underlying Parquet data
 CREATE PROCEDURE [cetas].[usp_LoadExternalTableFromSourceTableData]
-	@object_name				NVARCHAR(512),
-	@partition_date_column		SYSNAME,
-	@year						INT,
-	@month						INT,
-	@day						INT,
-	@load_external_table_sql	NVARCHAR(MAX)   = NULL OUTPUT,
-	@data_source_name			VARCHAR(350)	= NULL,
-	@debug_only					BIT				= 0
+    @object_name                NVARCHAR(512),
+    @partition_date_column      SYSNAME,
+    @year                       INT,
+    @month                      INT,
+    @day                        INT,
+    @load_external_table_sql    NVARCHAR(MAX)   = NULL OUTPUT,
+    @data_source_name           VARCHAR(350)    = NULL,
+    @debug_only                 BIT             = 0
 AS
 BEGIN
-	SET NOCOUNT ON;
+    SET NOCOUNT ON;
 
-	DECLARE @schema_name					SYSNAME,
-			@table_name						SYSNAME,
-			@columns_sql					NVARCHAR(MAX),
-			@external_staging_table_name	VARCHAR(256);
+    DECLARE @schema_name                    SYSNAME,
+            @table_name                     SYSNAME,
+            @columns_sql                    NVARCHAR(MAX),
+            @external_staging_table_name    VARCHAR(256);
 
-	-- extract schema and table/view name from the object name
-	SELECT @schema_name = PARSENAME(@object_name, 2), @table_name = PARSENAME(@object_name, 1);
+    -- extract schema and table/view name from the object name
+    SELECT @schema_name = PARSENAME(@object_name, 2), @table_name = PARSENAME(@object_name, 1);
 
-	-- If no external data source specified then set this to the global default
-	SELECT @data_source_name = ISNULL(@data_source_name, cetas.ExternalDataSource());
+    -- If no external data source specified then set this to the global default
+    SELECT @data_source_name = ISNULL(@data_source_name, cetas.ExternalDataSource());
 
-	-- Set External Staging Table name - we use the partition column in the name so it doesn't clash with creating from the same table but a different partition column
-	SET @external_staging_table_name = @table_name + 'ExternalPartitionedBy' + @partition_date_column + '_Staging';
+    -- Set External Staging Table name - we use the partition column in the name so it doesn't clash with creating from the same table but a different partition column
+    SET @external_staging_table_name = @table_name + 'ExternalPartitionedBy' + @partition_date_column + '_Staging';
 
 	SELECT @columns_sql = 
 		STRING_AGG(
