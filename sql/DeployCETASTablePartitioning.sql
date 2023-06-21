@@ -1,4 +1,4 @@
-﻿/*
+/*
 
 PRE-REQUISITES
 ==============
@@ -21,7 +21,7 @@ https://learn.microsoft.com/en-us/sql/t-sql/statements/create-external-table-as-
 
 -- Populate the following parameters
 DECLARE @storage_account	VARCHAR(100) = 'saawbblobdevuks2',
-		@storage_container	VARCHAR(100) = 'raw';
+        @storage_container	VARCHAR(100) = 'raw';
 
 -- IMPORTANT: Don't change any of the code below
 
