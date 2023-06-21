@@ -136,7 +136,7 @@ BEGIN
     SET @create_external_table_sql = N'';
 
 	IF @drop_existing = 1
-		SET @create_external_table_sql = @create_external_table_sql + N'
+        SET @create_external_table_sql = @create_external_table_sql + N'
 IF EXISTS(SELECT 1 FROM sys.external_tables WHERE [object_id] = OBJECT_ID(''' + @schema_name + '.' + @external_table_name + '''))
     DROP EXTERNAL TABLE [' + @schema_name + '].[' + @external_table_name + '];
 ';
@@ -162,7 +162,6 @@ WITH (
 
 END;
 GO
-
 
 -- Drop/Create Proc to populate the external table using CETAS to generate the underlying Parquet data
 -- Data is loaded based on incremental loading via partition date column keys (i.e. year/month/day)
@@ -199,44 +198,44 @@ BEGIN
     -- Set External Staging Table name - we use the partition column in the name so it doesn't clash with creating from the same table but a different partition column
     SET @external_staging_table_name = @table_name + 'ExternalPartitionedBy' + @partition_date_column + '_Staging';
 
-	SELECT @columns_sql = 
-		STRING_AGG(
-			CONVERT(NVARCHAR(MAX),
-			CHAR(9) + CHAR(9) + '[' + COLUMN_NAME + ']'),
-			',' + CHAR(13) + CHAR(10)
-		) WITHIN GROUP (ORDER BY ORDINAL_POSITION) + ',' + CHAR(13) + CHAR(10) + 
-		CHAR(9) + CHAR(9) + 'YEAR([' + @partition_date_column + ']) AS [' + @partition_date_column + 'Year],' + CHAR(13) + CHAR(10) + 
-		CHAR(9) + CHAR(9) + 'MONTH([' + @partition_date_column + ']) AS [' + @partition_date_column + 'Month],' + CHAR(13) + CHAR(10) + 
-		CHAR(9) + CHAR(9) + 'DAY([' + @partition_date_column + ']) AS [' + @partition_date_column + 'Day]'
-	FROM INFORMATION_SCHEMA.COLUMNS
-	WHERE
-		TABLE_SCHEMA = @schema_name
-	AND TABLE_NAME = @table_name;
+    SELECT @columns_sql = 
+        STRING_AGG(
+            CONVERT(NVARCHAR(MAX),
+            CHAR(9) + CHAR(9) + '[' + COLUMN_NAME + ']'),
+            ',' + CHAR(13) + CHAR(10)
+        ) WITHIN GROUP (ORDER BY ORDINAL_POSITION) + ',' + CHAR(13) + CHAR(10) + 
+        CHAR(9) + CHAR(9) + 'YEAR([' + @partition_date_column + ']) AS [' + @partition_date_column + 'Year],' + CHAR(13) + CHAR(10) + 
+        CHAR(9) + CHAR(9) + 'MONTH([' + @partition_date_column + ']) AS [' + @partition_date_column + 'Month],' + CHAR(13) + CHAR(10) + 
+        CHAR(9) + CHAR(9) + 'DAY([' + @partition_date_column + ']) AS [' + @partition_date_column + 'Day]'
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE
+        TABLE_SCHEMA = @schema_name
+    AND TABLE_NAME = @table_name;
 
-	SET @load_external_table_sql = N'
+    SET @load_external_table_sql = N'
 IF EXISTS(SELECT 1 FROM sys.external_tables WHERE [object_id] = OBJECT_ID(''' + @schema_name + '.' + @external_staging_table_name + '''))
-	DROP EXTERNAL TABLE [' + @schema_name + '].[' + @external_staging_table_name + '];	
-	';
+    DROP EXTERNAL TABLE [' + @schema_name + '].[' + @external_staging_table_name + '];	
+    ';
 
-	SET @load_external_table_sql = @load_external_table_sql + N'
+    SET @load_external_table_sql = @load_external_table_sql + N'
 CREATE EXTERNAL TABLE [' + @schema_name + '].[' + @external_staging_table_name + '] 
 WITH (
-		LOCATION = ''' + @schema_name + '/' + @table_name + '/' + @partition_date_column + '/Year=' + CAST(@year AS VARCHAR(10)) + '/Month=' + CAST(@month AS VARCHAR(10)) + '/Day=' + CAST(@day AS VARCHAR(10)) + '/'',
-		DATA_SOURCE = [' + @data_source_name + '],
-		FILE_FORMAT = ParquetFileFormat
-	) 
+        LOCATION = ''' + @schema_name + '/' + @table_name + '/' + @partition_date_column + '/Year=' + CAST(@year AS VARCHAR(10)) + '/Month=' + CAST(@month AS VARCHAR(10)) + '/Day=' + CAST(@day AS VARCHAR(10)) + '/'',
+        DATA_SOURCE = [' + @data_source_name + '],
+        FILE_FORMAT = ParquetFileFormat
+    ) 
 AS
-	SELECT 
+    SELECT 
 ' + @columns_sql + '
-	FROM [' + @schema_name + '].[' + @table_name + ']
-	WHERE
-		YEAR([' + @partition_date_column + ']) = ' + CAST(@year AS VARCHAR(10)) + ' 
-	AND MONTH([' + @partition_date_column + ']) = ' + CAST(@month AS VARCHAR(10)) + '
-	AND DAY([' + @partition_date_column + ']) = ' + CAST(@day AS VARCHAR(10)) + ';
+    FROM [' + @schema_name + '].[' + @table_name + ']
+    WHERE
+        YEAR([' + @partition_date_column + ']) = ' + CAST(@year AS VARCHAR(10)) + ' 
+    AND MONTH([' + @partition_date_column + ']) = ' + CAST(@month AS VARCHAR(10)) + '
+    AND DAY([' + @partition_date_column + ']) = ' + CAST(@day AS VARCHAR(10)) + ';
 ';
 
-	IF @debug_only = 0
-		EXEC sp_executesql @load_external_table_sql;
+    IF @debug_only = 0
+        EXEC sp_executesql @load_external_table_sql;
 
 END;
 GO
