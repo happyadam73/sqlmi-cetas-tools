@@ -86,6 +86,35 @@ END
 ';
 EXEC sp_executesql @sql_cmd;
 
+-- Drop/Create proc to Print long strings (useful for printing large sql scripts in SSMS)
+IF EXISTS (SELECT * FROM sys.objects WHERE type = 'P' AND OBJECT_ID = OBJECT_ID('cetas.usp_PrintMax'))
+    DROP PROCEDURE [cetas].[usp_PrintMax];
+GO
+
+CREATE PROCEDURE [cetas].[usp_PrintMax] 
+    @message NVARCHAR(MAX)
+AS 
+-- Credit: https://stackoverflow.com/questions/7850477/how-to-print-varcharmax-using-print-statement
+BEGIN
+    DECLARE @severity INT = 0,
+            @start_pos INT = 1,
+            @end_pos INT,
+            @length INT = LEN(@message),
+            @sub_message NVARCHAR(MAX),
+            @cleaned_message NVARCHAR(MAX) = REPLACE(@message,'%','%%');
+ 
+    WHILE (@start_pos <= @length)
+    BEGIN
+        SET @end_pos = CHARINDEX(CHAR(13) + CHAR(10), @cleaned_message + CHAR(13) + CHAR(10), @start_pos);
+        SET @sub_message = SUBSTRING(@cleaned_message, @start_pos, @end_pos - @start_pos);
+        EXEC sp_executesql N'RAISERROR(@msg, @severity, 10) WITH NOWAIT;', N'@msg NVARCHAR(MAX), @severity INT', @sub_message, @severity;
+        SELECT @start_pos = @end_pos + 2, @severity = 0; 
+    END
+
+    RETURN 0;
+END;
+GO
+
 -- Drop/Create Proc to generate a CREATE EXTERNAL TABLE script based on the object name including partition columns based on specified date type column
 IF EXISTS (SELECT * FROM sys.objects WHERE type = 'P' AND [object_id] = OBJECT_ID('cetas.usp_CreateExternalTableFromSourceTable'))
     DROP PROCEDURE [cetas].[usp_CreateExternalTableFromSourceTable];
@@ -125,9 +154,9 @@ BEGIN
             CASE WHEN IS_NULLABLE = 'YES' THEN 'NULL' ELSE 'NOT NULL' END),
             ',' + CHAR(13) + CHAR(10)
         ) WITHIN GROUP (ORDER BY ORDINAL_POSITION) + ',' + CHAR(13) + CHAR(10) + 
-        CHAR(9) + '[' + @partition_date_column + 'Year] INT NOT NULL,' + CHAR(13) + CHAR(10) + 
-        CHAR(9) + '[' + @partition_date_column + 'Month] INT NOT NULL,' + CHAR(13) + CHAR(10) + 
-        CHAR(9) + '[' + @partition_date_column + 'Day] INT NOT NULL'
+        CHAR(9) + '[' + @partition_date_column + 'Year] AS CAST(filepath(1) AS INT),' + CHAR(13) + CHAR(10) + 
+        CHAR(9) + '[' + @partition_date_column + 'Month] AS CAST(filepath(2) AS INT),' + CHAR(13) + CHAR(10) + 
+        CHAR(9) + '[' + @partition_date_column + 'Day] AS CAST(filepath(3) AS INT)'
     FROM INFORMATION_SCHEMA.COLUMNS
     WHERE
         TABLE_SCHEMA = @schema_name
@@ -135,30 +164,29 @@ BEGIN
 
     SET @create_external_table_sql = N'';
 
-	IF @drop_existing = 1
+    IF @drop_existing = 1
         SET @create_external_table_sql = @create_external_table_sql + N'
 IF EXISTS(SELECT 1 FROM sys.external_tables WHERE [object_id] = OBJECT_ID(''' + @schema_name + '.' + @external_table_name + '''))
     DROP EXTERNAL TABLE [' + @schema_name + '].[' + @external_table_name + '];
 ';
 
-	SET @create_external_table_sql = @create_external_table_sql + N'
+    SET @create_external_table_sql = @create_external_table_sql + N'
 CREATE EXTERNAL TABLE [' + @schema_name + '].[' + @external_table_name + '] (
 ' + @columns_sql + '
 )
 WITH (
-        LOCATION = ''' + @schema_name + '/' + @table_name + '/' + @partition_date_column + '/Year=*/Month=*/Day=*/*.parquet'',
-        DATA_SOURCE = [' + @data_source_name + '],
-        FILE_FORMAT = ParquetFileFormat,
-        PARTITION (
-            [' + @partition_date_column + 'Year],
-            [' + @partition_date_column + 'Month],
-            [' + @partition_date_column + 'Day]
-        ) 
+    LOCATION = ''' + @schema_name + '/' + @table_name + '/' + @partition_date_column + '/Year=*/Month=*/Day=*/'',
+    DATA_SOURCE = [' + @data_source_name + '],
+    FILE_FORMAT = [ParquetFileFormat],
+    REJECT_TYPE = VALUE,
+    REJECT_VALUE = 0 
 );
 ';
 
     IF @debug_only = 0
         EXEC sp_executesql @create_external_table_sql;
+    ELSE
+        EXEC cetas.usp_PrintMax @create_external_table_sql;
 
 END;
 GO
@@ -178,7 +206,6 @@ CREATE PROCEDURE [cetas].[usp_LoadExternalTableFromSourceTableData]
     @month                      INT,
     @day                        INT,
     @load_external_table_sql    NVARCHAR(MAX)   = NULL OUTPUT,
-    @data_source_name           VARCHAR(350)    = NULL,
     @debug_only                 BIT             = 0
 AS
 BEGIN
@@ -187,13 +214,11 @@ BEGIN
     DECLARE @schema_name                    SYSNAME,
             @table_name                     SYSNAME,
             @columns_sql                    NVARCHAR(MAX),
-            @external_staging_table_name    VARCHAR(256);
+            @external_staging_table_name    VARCHAR(256),
+            @data_source_name               VARCHAR(350) = cetas.ExternalDataSource();
 
     -- extract schema and table/view name from the object name
     SELECT @schema_name = PARSENAME(@object_name, 2), @table_name = PARSENAME(@object_name, 1);
-
-    -- If no external data source specified then set this to the global default
-    SELECT @data_source_name = ISNULL(@data_source_name, cetas.ExternalDataSource());
 
     -- Set External Staging Table name - we use the partition column in the name so it doesn't clash with creating from the same table but a different partition column
     SET @external_staging_table_name = @table_name + 'ExternalPartitionedBy' + @partition_date_column + '_Staging';
@@ -220,10 +245,10 @@ IF EXISTS(SELECT 1 FROM sys.external_tables WHERE [object_id] = OBJECT_ID(''' + 
     SET @load_external_table_sql = @load_external_table_sql + N'
 CREATE EXTERNAL TABLE [' + @schema_name + '].[' + @external_staging_table_name + '] 
 WITH (
-        LOCATION = ''' + @schema_name + '/' + @table_name + '/' + @partition_date_column + '/Year=' + CAST(@year AS VARCHAR(10)) + '/Month=' + CAST(@month AS VARCHAR(10)) + '/Day=' + CAST(@day AS VARCHAR(10)) + '/'',
-        DATA_SOURCE = [' + @data_source_name + '],
-        FILE_FORMAT = ParquetFileFormat
-    ) 
+    LOCATION = ''' + @schema_name + '/' + @table_name + '/' + @partition_date_column + '/Year=' + CAST(@year AS VARCHAR(10)) + '/Month=' + CAST(@month AS VARCHAR(10)) + '/Day=' + CAST(@day AS VARCHAR(10)) + '/'',
+    DATA_SOURCE = [' + @data_source_name + '],
+    FILE_FORMAT = ParquetFileFormat
+) 
 AS
     SELECT 
 ' + @columns_sql + '
@@ -236,22 +261,139 @@ AS
 
     IF @debug_only = 0
         EXEC sp_executesql @load_external_table_sql;
+    ELSE
+        EXEC cetas.usp_PrintMax @load_external_table_sql;
 
 END;
 GO
 
+-- Drop/Create Proc to either fully or selectively syncronise a source table with the external table using CETAS to generate the underlying Parquet data
+-- Data is loaded based on incremental loading via partition date column keys (i.e. year/month/day)
+-- Default if a full syncronisation - i.e. any data in the source table will be sync'ed with the external table
+-- You can perform a selective synchronisation by specifying either or both of the @date_from and @date_to parameters
+IF EXISTS (SELECT * FROM sys.objects WHERE type = 'P' AND [object_id] = OBJECT_ID('cetas.usp_SyncExternalTableFromSourceTableData'))
+    DROP PROCEDURE [cetas].[usp_SyncExternalTableFromSourceTableData];
+GO
+
+-- Create Stored procedure to fully or selectively syncronise a source table with the external table using CETAS to generate the underlying Parquet data
+CREATE PROCEDURE [cetas].[usp_SyncExternalTableFromSourceTableData]
+    @object_name                NVARCHAR(512),
+    @partition_date_column      SYSNAME,
+    @date_from                  DATE            = NULL,
+    @date_to                    DATE            = NULL,
+    @sync_external_table_sql    NVARCHAR(MAX)   = NULL,
+    @debug_only                 BIT             = 0
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @schema_name            SYSNAME,
+            @table_name             SYSNAME,
+            @external_table_name    VARCHAR(256),
+            @cursor_name            SYSNAME,
+            @use_except_clause      BIT = 1;
+
+    -- extract schema and table/view name from the object name
+    SELECT @schema_name = PARSENAME(@object_name, 2), @table_name = PARSENAME(@object_name, 1);
+
+    -- Set External Table name - we use the partition column in the name so it doesn't clash with creating from the same table but a different partition column
+    SET @external_table_name = @table_name + 'ExternalPartitionedBy' + @partition_date_column;
+
+    -- First determine if we have an empty external table.  If so, you will get a parse time error (not runtime) so we need to catch using dynamic SQL
+    -- If we catch this error then we will remove the EXCEPT clause from the T-SQL cursor below
+    BEGIN TRY
+        -- Note this query is optimised by using a partition key in the where clause.  It doesn't matter that it will return 0 records - we just
+        -- want to check whether the External Table query parses OK.
+        DECLARE @sql_cmd NVARCHAR(MAX) = N'DECLARE @count INT; SELECT @count = COUNT(1) FROM [' + @schema_name + '].[' + @external_table_name + '] WHERE ' + @partition_date_column + 'Year = 0;'
+        EXEC sp_executesql @sql_cmd;
+    END TRY
+    BEGIN CATCH
+        IF ERROR_NUMBER() = 16561   -- External table '%ls' is not accessible because content of directory cannot be listed (i.e. there's is no existing data)
+            SET @use_except_clause = 0;
+    END CATCH;
+
+    -- Set cursor name based on partition column name
+    SET @cursor_name = LOWER(@partition_date_column) + '_cursor';
+
+    -- Generate Sync SQL statement
+    SET @sync_external_table_sql = N'
+    DECLARE @' + LOWER(@partition_date_column) + '_year INT, 
+            @' + LOWER(@partition_date_column) + '_month INT, 
+            @' + LOWER(@partition_date_column) + '_day INT,
+            @msg NVARCHAR(255);
+
+    DECLARE ' + @cursor_name + ' CURSOR FOR
+    SELECT DISTINCT
+        YEAR([' + @partition_date_column + ']) AS [' + @partition_date_column + 'Year],
+        MONTH([' + @partition_date_column + ']) AS [' + @partition_date_column + 'Month],
+        DAY([' + @partition_date_column + ']) AS [' + @partition_date_column + 'Day]
+    FROM [' + @schema_name + '].[' + @table_name + ']';
+
+    -- Add a filter if either or both of the @date_from/to parameters have been set
+    IF (@date_from IS NOT NULL) AND (@date_to IS NOT NULL)
+        SET @sync_external_table_sql = @sync_external_table_sql + N'
+    WHERE
+        [' + @partition_date_column + '] BETWEEN DATEFROMPARTS(' + CAST(YEAR(@date_from) AS VARCHAR(10)) + ',' + CAST(MONTH(@date_from) AS VARCHAR(10)) + ',' + CAST(DAY(@date_from) AS VARCHAR(10)) + 
+        ') AND DATEFROMPARTS(' + CAST(YEAR(@date_to) AS VARCHAR(10)) + ',' + CAST(MONTH(@date_to) AS VARCHAR(10)) + ',' + CAST(DAY(@date_to) AS VARCHAR(10)) + ')';
+    ELSE IF (@date_from IS NOT NULL)
+        SET @sync_external_table_sql = @sync_external_table_sql + N'
+    WHERE
+        [' + @partition_date_column + '] >= DATEFROMPARTS(' + CAST(YEAR(@date_from) AS VARCHAR(10)) + ',' + CAST(MONTH(@date_from) AS VARCHAR(10)) + ',' + CAST(DAY(@date_from) AS VARCHAR(10)) + ')';
+    ELSE IF (@date_to IS NOT NULL)
+        SET @sync_external_table_sql = @sync_external_table_sql + N'
+    WHERE
+        [' + @partition_date_column + '] <= DATEFROMPARTS(' + CAST(YEAR(@date_to) AS VARCHAR(10)) + ',' + CAST(MONTH(@date_to) AS VARCHAR(10)) + ',' + CAST(DAY(@date_to) AS VARCHAR(10)) + ')';
+
+    -- Add an EXCEPT clause if required. If there is already data in the external tables we want to make sure we 
+    -- don't attempt to overwrite it otherwise an error will occur.
+    IF @use_except_clause = 1
+        SET @sync_external_table_sql = @sync_external_table_sql + N'
+    EXCEPT
+    SELECT DISTINCT
+        [' + @partition_date_column + 'Year],
+        [' + @partition_date_column + 'Month],
+        [' + @partition_date_column + 'Day]
+    FROM [' + @schema_name + '].[' + @external_table_name + ']'
+
+    SET @sync_external_table_sql = @sync_external_table_sql + N'
+    ORDER BY
+        [' + @partition_date_column + 'Year],
+        [' + @partition_date_column + 'Month],
+        [' + @partition_date_column + 'Day];
+
+    RAISERROR(''Determining syncronisation intervals'', 0, 1) WITH NOWAIT;
+    OPEN ' + @cursor_name + ';
+    SET @msg = ''Total syncronisation intervals: '' + CAST(@@CURSOR_ROWS AS VARCHAR(10))
+    RAISERROR(@msg, 0, 1) WITH NOWAIT;
+
+    FETCH NEXT FROM ' + @cursor_name + ' INTO @' + LOWER(@partition_date_column) + '_year, @' + LOWER(@partition_date_column) + '_month, @' + LOWER(@partition_date_column) + '_day;
+
+    WHILE @@FETCH_STATUS = 0
+    BEGIN
+        SET @msg = ''Syncronising year: '' + CAST(@' + LOWER(@partition_date_column) + '_year AS VARCHAR(4)) + '', month: '' + CAST(@' + LOWER(@partition_date_column) + '_month AS VARCHAR(2)) + '', day: '' + CAST(@' + LOWER(@partition_date_column) + '_day AS VARCHAR(2));
+        RAISERROR(@msg, 0, 1) WITH NOWAIT;
+        EXEC [cetas].[usp_LoadExternalTableFromSourceTableData] ''' + @object_name + ''', ''' + @partition_date_column + ''', @' + LOWER(@partition_date_column) + '_year, @' + LOWER(@partition_date_column) + '_month, @' + LOWER(@partition_date_column) + '_day;
+        FETCH NEXT FROM ' + @cursor_name + ' INTO @' + LOWER(@partition_date_column) + '_year, @' + LOWER(@partition_date_column) + '_month, @' + LOWER(@partition_date_column) + '_day;
+    END
+
+    RAISERROR(''Syncronisation complete'', 0, 1) WITH NOWAIT;
+    CLOSE ' + @cursor_name + ';
+    DEALLOCATE ' + @cursor_name + ';
+    ';
+
+    IF @debug_only = 0
+        EXEC sp_executesql @sync_external_table_sql;
+    ELSE
+        EXEC cetas.usp_PrintMax @sync_external_table_sql;
+
+END;
+GO
+
+
 /*
 EXEC [cetas].[usp_CreateExternalTableFromSourceTable] '[dbo].[FactInternetSales]', 'OrderDate';
-EXEC [cetas].[usp_LoadExternalTableFromSourceTableData] '[dbo].[FactInternetSales]', 'OrderDate', 2013, 12, 1;
-EXEC [cetas].[usp_LoadExternalTableFromSourceTableData] '[dbo].[FactInternetSales]', 'OrderDate', 2013, 12, 2;
-EXEC [cetas].[usp_LoadExternalTableFromSourceTableData] '[dbo].[FactInternetSales]', 'OrderDate', 2013, 12, 3;
-EXEC [cetas].[usp_LoadExternalTableFromSourceTableData] '[dbo].[FactInternetSales]', 'OrderDate', 2013, 12, 4;
-EXEC [cetas].[usp_LoadExternalTableFromSourceTableData] '[dbo].[FactInternetSales]', 'OrderDate', 2013, 12, 5;
+EXEC [cetas].[usp_SyncExternalTableFromSourceTableData] '[dbo].[FactInternetSales]', 'OrderDate';
 
 EXEC [cetas].[usp_CreateExternalTableFromSourceTable] '[dbo].[FactInternetSales]', 'ShipDate';
-EXEC [cetas].[usp_LoadExternalTableFromSourceTableData] '[dbo].[FactInternetSales]', 'ShipDate', 2013, 12, 1;
-EXEC [cetas].[usp_LoadExternalTableFromSourceTableData] '[dbo].[FactInternetSales]', 'ShipDate', 2013, 12, 2;
-EXEC [cetas].[usp_LoadExternalTableFromSourceTableData] '[dbo].[FactInternetSales]', 'ShipDate', 2013, 12, 3;
-EXEC [cetas].[usp_LoadExternalTableFromSourceTableData] '[dbo].[FactInternetSales]', 'ShipDate', 2013, 12, 4;
-EXEC [cetas].[usp_LoadExternalTableFromSourceTableData] '[dbo].[FactInternetSales]', 'ShipDate', 2013, 12, 5;
+EXEC [cetas].[usp_SyncExternalTableFromSourceTableData] '[dbo].[FactInternetSales]', 'ShipDate';
 */
