@@ -27,27 +27,27 @@ DECLARE @storage_account	VARCHAR(100) = 'saawbblobdevuks2',
 
 -- Check we're currently in the context of a user database.  If you get this error, simply change the database context to the database which contains the data you want to export
 IF DB_NAME() IN ('master', 'model', 'msdb', 'tempdb')
-	THROW 50000, 'You need to run this script in the context of a user database', 1;
+    THROW 50000, 'You need to run this script in the context of a user database', 1;
 
-DECLARE @db_name				SYSNAME			= DB_NAME(),
-		@sql_cmd				NVARCHAR(MAX),
-		@master_key_password	NVARCHAR(50),
-		@credential_name		VARCHAR(200)	= @storage_account + '-' + @storage_container,
-		@data_source_name		VARCHAR(350)	= @storage_account + '-' + @storage_container + '-' + DB_NAME();
+DECLARE @db_name                SYSNAME         = DB_NAME(),
+		@sql_cmd                NVARCHAR(MAX),
+		@master_key_password    NVARCHAR(50),
+		@credential_name        VARCHAR(200)    = @storage_account + '-' + @storage_container,
+		@data_source_name       VARCHAR(350)    = @storage_account + '-' + @storage_container + '-' + DB_NAME();
 
 -- Generate a database master key if it doesn't exist; use a random strong password
 IF NOT EXISTS(SELECT 1 FROM sys.symmetric_keys WHERE name LIKE '%DatabaseMasterKey%')
 BEGIN
-	SELECT @master_key_password = CAST(N'' AS XML).value('xs:base64Binary(xs:hexBinary(sql:column("bin")))', 'VARCHAR(MAX)') FROM (SELECT CONVERT(VARBINARY(MAX), CAST(CRYPT_GEN_RANDOM(17) AS NVARCHAR(50))) AS bin) AS x;
-	SET @sql_cmd = N'CREATE MASTER KEY ENCRYPTION BY PASSWORD = ''' + @master_key_password + '''';
-	EXEC sp_executesql @sql_cmd;
+    SELECT @master_key_password = CAST(N'' AS XML).value('xs:base64Binary(xs:hexBinary(sql:column("bin")))', 'VARCHAR(MAX)') FROM (SELECT CONVERT(VARBINARY(MAX), CAST(CRYPT_GEN_RANDOM(17) AS NVARCHAR(50))) AS bin) AS x;
+    SET @sql_cmd = N'CREATE MASTER KEY ENCRYPTION BY PASSWORD = ''' + @master_key_password + '''';
+    EXEC sp_executesql @sql_cmd;
 END
 
 -- Generate a Managed Identity credential for the storage account
 SET @sql_cmd = N'
 IF NOT EXISTS(SELECT 1 FROM sys.database_scoped_credentials WHERE [name] = ''' + @credential_name + ''')
-	CREATE DATABASE SCOPED CREDENTIAL [' + @credential_name + ']
-	WITH IDENTITY = ''Managed Identity''; 
+    CREATE DATABASE SCOPED CREDENTIAL [' + @credential_name + ']
+    WITH IDENTITY = ''Managed Identity''; 
 ';
 EXEC sp_executesql @sql_cmd;
 
@@ -55,25 +55,25 @@ EXEC sp_executesql @sql_cmd;
 -- By convention we use the database name as root folder within the file path
 SET @sql_cmd = N'
 IF NOT EXISTS(SELECT 1 FROM sys.external_data_sources WHERE [name] = ''' + @data_source_name + ''')
-	CREATE EXTERNAL DATA SOURCE [' + @data_source_name + ']
-	WITH (
-		LOCATION = ''abs://' + @storage_container + '@' + @storage_account + '.blob.core.windows.net/' + @db_name + ''',
-		CREDENTIAL = [' + @credential_name + ']
-	);
+    CREATE EXTERNAL DATA SOURCE [' + @data_source_name + ']
+    WITH (
+        LOCATION = ''abs://' + @storage_container + '@' + @storage_account + '.blob.core.windows.net/' + @db_name + ''',
+        CREDENTIAL = [' + @credential_name + ']
+    );
 ';
 EXEC sp_executesql @sql_cmd;
 
 -- Create External File Format for PARQUET with Snappy compression
 IF NOT EXISTS(SELECT 1 FROM sys.external_file_formats WHERE [name] = 'ParquetFileFormat')
-	CREATE EXTERNAL FILE FORMAT ParquetFileFormat
-		WITH (
-			FORMAT_TYPE = PARQUET,
-			DATA_COMPRESSION = 'org.apache.hadoop.io.compress.SnappyCodec'
-		);
+    CREATE EXTERNAL FILE FORMAT ParquetFileFormat
+    WITH (
+        FORMAT_TYPE = PARQUET,
+        DATA_COMPRESSION = 'org.apache.hadoop.io.compress.SnappyCodec'
+    );
 
 -- Create cetas schema
 IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = 'cetas')
-	EXEC sp_executesql N'CREATE SCHEMA [cetas]';
+    EXEC sp_executesql N'CREATE SCHEMA [cetas]';
 
 -- We need to reference the data source in various procs, so create a 'global' default that other procs/functions can use if not provided
 -- Do this by creating a UDF based on the @data_source_name parameter above
@@ -81,7 +81,7 @@ SET @sql_cmd = N'
 CREATE OR ALTER FUNCTION cetas.ExternalDataSource()
 RETURNS SYSNAME AS
 BEGIN
-	RETURN N''' + @data_source_name + ''';
+    RETURN N''' + @data_source_name + ''';
 END
 ';
 EXEC sp_executesql @sql_cmd;
@@ -93,47 +93,47 @@ GO
 
 -- Create Stored procedure to generate the parent external table to virtualise specified source data table data
 CREATE PROCEDURE [cetas].[usp_CreateExternalTableFromSourceTable]
-	@object_name				NVARCHAR(512),
-	@partition_date_column		SYSNAME,
-	@create_external_table_sql	NVARCHAR(MAX)   = NULL OUTPUT,
-	@data_source_name			VARCHAR(350)	= NULL,
-	@drop_existing				BIT				= 1,
-	@debug_only					BIT				= 0
+    @object_name                NVARCHAR(512),
+    @partition_date_column      SYSNAME,
+    @create_external_table_sql  NVARCHAR(MAX)   = NULL OUTPUT,
+    @data_source_name           VARCHAR(350)    = NULL,
+    @drop_existing              BIT             = 1,
+    @debug_only                 BIT             = 0
 AS
 BEGIN
 	SET NOCOUNT ON;
 
-	DECLARE @schema_name			SYSNAME,
-			@table_name				SYSNAME,
-			@columns_sql			NVARCHAR(MAX),
-			@external_table_name	VARCHAR(256);
+	DECLARE @schema_name            SYSNAME,
+			@table_name             SYSNAME,
+			@columns_sql            NVARCHAR(MAX),
+			@external_table_name    VARCHAR(256);
 
-	-- extract schema and table/view name from the object name
-	SELECT @schema_name = PARSENAME(@object_name, 2), @table_name = PARSENAME(@object_name, 1);
+    -- extract schema and table/view name from the object name
+    SELECT @schema_name = PARSENAME(@object_name, 2), @table_name = PARSENAME(@object_name, 1);
 
-	-- If no external data source specified then set this to the global default
-	SELECT @data_source_name = ISNULL(@data_source_name, cetas.ExternalDataSource());
+    -- If no external data source specified then set this to the global default
+    SELECT @data_source_name = ISNULL(@data_source_name, cetas.ExternalDataSource());
 
-	-- Set External Table name - we use the partition column in the name so it doesn't clash with creating from the same table but a different partition column
-	SET @external_table_name = @table_name + 'ExternalPartitionedBy' + @partition_date_column;
+    -- Set External Table name - we use the partition column in the name so it doesn't clash with creating from the same table but a different partition column
+    SET @external_table_name = @table_name + 'ExternalPartitionedBy' + @partition_date_column;
 
-	SELECT @columns_sql = 
-		STRING_AGG(
-			CONVERT(NVARCHAR(MAX),
-			CHAR(9) + '[' + COLUMN_NAME + '] ' + 
-			UPPER(DATA_TYPE) + ISNULL('(' + CASE WHEN CHARACTER_MAXIMUM_LENGTH < 0 THEN 'MAX' ELSE CAST(CHARACTER_MAXIMUM_LENGTH AS VARCHAR(10)) END + ')','') + ' ' + 
-			CASE WHEN IS_NULLABLE = 'YES' THEN 'NULL' ELSE 'NOT NULL' END),
-			',' + CHAR(13) + CHAR(10)
-		) WITHIN GROUP (ORDER BY ORDINAL_POSITION) + ',' + CHAR(13) + CHAR(10) + 
-		CHAR(9) + '[' + @partition_date_column + 'Year] INT NOT NULL,' + CHAR(13) + CHAR(10) + 
-		CHAR(9) + '[' + @partition_date_column + 'Month] INT NOT NULL,' + CHAR(13) + CHAR(10) + 
-		CHAR(9) + '[' + @partition_date_column + 'Day] INT NOT NULL'
-	FROM INFORMATION_SCHEMA.COLUMNS
-	WHERE
-		TABLE_SCHEMA = @schema_name
-	AND TABLE_NAME = @table_name;
+    SELECT @columns_sql = 
+        STRING_AGG(
+            CONVERT(NVARCHAR(MAX),
+            CHAR(9) + '[' + COLUMN_NAME + '] ' + 
+            UPPER(DATA_TYPE) + ISNULL('(' + CASE WHEN CHARACTER_MAXIMUM_LENGTH < 0 THEN 'MAX' ELSE CAST(CHARACTER_MAXIMUM_LENGTH AS VARCHAR(10)) END + ')','') + ' ' + 
+            CASE WHEN IS_NULLABLE = 'YES' THEN 'NULL' ELSE 'NOT NULL' END),
+            ',' + CHAR(13) + CHAR(10)
+        ) WITHIN GROUP (ORDER BY ORDINAL_POSITION) + ',' + CHAR(13) + CHAR(10) + 
+        CHAR(9) + '[' + @partition_date_column + 'Year] INT NOT NULL,' + CHAR(13) + CHAR(10) + 
+        CHAR(9) + '[' + @partition_date_column + 'Month] INT NOT NULL,' + CHAR(13) + CHAR(10) + 
+        CHAR(9) + '[' + @partition_date_column + 'Day] INT NOT NULL'
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE
+        TABLE_SCHEMA = @schema_name
+    AND TABLE_NAME = @table_name;
 
-	SET @create_external_table_sql = N'';
+    SET @create_external_table_sql = N'';
 
 	IF @drop_existing = 1
 		SET @create_external_table_sql = @create_external_table_sql + N'
