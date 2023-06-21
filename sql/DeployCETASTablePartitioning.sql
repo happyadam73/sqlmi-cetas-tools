@@ -30,10 +30,10 @@ IF DB_NAME() IN ('master', 'model', 'msdb', 'tempdb')
     THROW 50000, 'You need to run this script in the context of a user database', 1;
 
 DECLARE @db_name                SYSNAME         = DB_NAME(),
-		@sql_cmd                NVARCHAR(MAX),
-		@master_key_password    NVARCHAR(50),
-		@credential_name        VARCHAR(200)    = @storage_account + '-' + @storage_container,
-		@data_source_name       VARCHAR(350)    = @storage_account + '-' + @storage_container + '-' + DB_NAME();
+        @sql_cmd                NVARCHAR(MAX),
+        @master_key_password    NVARCHAR(50),
+        @credential_name        VARCHAR(200)    = @storage_account + '-' + @storage_container,
+        @data_source_name       VARCHAR(350)    = @storage_account + '-' + @storage_container + '-' + DB_NAME();
 
 -- Generate a database master key if it doesn't exist; use a random strong password
 IF NOT EXISTS(SELECT 1 FROM sys.symmetric_keys WHERE name LIKE '%DatabaseMasterKey%')
