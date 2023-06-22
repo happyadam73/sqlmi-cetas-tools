@@ -20,8 +20,8 @@ https://learn.microsoft.com/en-us/sql/t-sql/statements/create-external-table-as-
 */
 
 -- Populate the following parameters
-DECLARE @storage_account	VARCHAR(100) = 'saawbpremdevuks1',  -- can be Std Blod, ADLS Gen2, or Premium (Block Blob)
-        @storage_container	VARCHAR(100) = 'raw';
+DECLARE @storage_account	VARCHAR(100) = 'saawbpremblobdevuks1',  -- can be Std Blob, ADLS Gen2, or Premium (Block Blob)
+        @storage_container	VARCHAR(100) = 'raw2';
 
 -- IMPORTANT: Don't change any of the code below
 
@@ -216,7 +216,8 @@ BEGIN
             @table_name                     SYSNAME,
             @columns_sql                    NVARCHAR(MAX),
             @external_staging_table_name    VARCHAR(256),
-            @data_source_name               VARCHAR(350) = cetas.ExternalDataSource();
+            @data_source_name               VARCHAR(350) = cetas.ExternalDataSource(),
+            @ret_val                        INT;
 
     -- extract schema and table/view name from the object name
     SELECT @schema_name = PARSENAME(@object_name, 2), @table_name = PARSENAME(@object_name, 1);
@@ -261,7 +262,13 @@ AS
 ';
 
     IF @debug_only = 0
-        EXEC sp_executesql @load_external_table_sql;
+    BEGIN
+        EXEC @ret_val = sp_executesql @load_external_table_sql;
+        -- Issues with External tables can result in parse time errors, not runtime, which are swallowed by the dynamic SQL
+        -- Given this proc is iterated via the sync proc, then best to throw a failing dynamic SQL error in order to stop the batch
+        IF @ret_val <> 0
+            THROW 50000, N'Error in Load External Table SQL: This could indicate access is denied, or invalid storage account endpoint/credentials/protocol has been used.', 1;
+    END
     ELSE
         EXEC cetas.usp_PrintMax @load_external_table_sql;
 
