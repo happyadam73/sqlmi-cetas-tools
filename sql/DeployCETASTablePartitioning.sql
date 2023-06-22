@@ -20,7 +20,7 @@ https://learn.microsoft.com/en-us/sql/t-sql/statements/create-external-table-as-
 */
 
 -- Populate the following parameters
-DECLARE @storage_account	VARCHAR(100) = 'saawbblobdevuks2',
+DECLARE @storage_account	VARCHAR(100) = 'saawbpremdevuks1',  -- can be Std Blod, ADLS Gen2, or Premium (Block Blob)
         @storage_container	VARCHAR(100) = 'raw';
 
 -- IMPORTANT: Don't change any of the code below
@@ -31,6 +31,7 @@ IF DB_NAME() IN ('master', 'model', 'msdb', 'tempdb')
 
 DECLARE @db_name                SYSNAME         = DB_NAME(),
         @sql_cmd                NVARCHAR(MAX),
+        @location               NVARCHAR(MAX),
         @master_key_password    NVARCHAR(50),
         @credential_name        VARCHAR(200)    = @storage_account + '-' + @storage_container,
         @data_source_name       VARCHAR(350)    = @storage_account + '-' + @storage_container + '-' + DB_NAME();
@@ -396,4 +397,8 @@ EXEC [cetas].[usp_SyncExternalTableFromSourceTableData] '[dbo].[FactInternetSale
 
 EXEC [cetas].[usp_CreateExternalTableFromSourceTable] '[dbo].[FactInternetSales]', 'ShipDate';
 EXEC [cetas].[usp_SyncExternalTableFromSourceTableData] '[dbo].[FactInternetSales]', 'ShipDate';
+
+EXEC [cetas].[usp_CreateExternalTableFromSourceTable] '[Warehouse].[ColdRoomTemperatures_Archive]', 'RecordedWhen';
+EXEC [cetas].[usp_SyncExternalTableFromSourceTableData] '[Warehouse].[ColdRoomTemperatures_Archive]', 'RecordedWhen';
+
 */
